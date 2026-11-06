@@ -1,0 +1,149 @@
+# Changelog
+
+## 0.8.2
+- New shortcut action: **Touch keyboard show / hide**. It toggles the Windows touch keyboard (the one used on tablets), which has no hotkey of its own. It works on back-paddle combos and on Legion L / Legion R.
+- Fix: closing the app with a plain close request (e.g. `taskkill` without `/f`) left the process running without a window or tray icon, and the next launch crashed it. It now exits cleanly.
+- Closing the main window to the tray also hides the RGB and Shortcuts windows.
+
+## 0.8.1
+- **Legion L / Legion R** can run actions (confirmed on the device) (Shortcuts window → Legion buttons). They can't be remapped, but their presses are read from the controller's state stream (mi_06, byte 1).
+- New actions: **Joystick mouse on / off**, **Gyro mouse on / off**, **Open Legion Helper**.
+
+## 0.8.0
+- **Mode cycle shortcut** supports keyboard combinations: Ctrl / Alt / Shift / Win + F1-F22, A-Z or 0-9. Normal keys require a modifier so they aren't stolen from other apps, and combinations already used by another app are reported. F13-F22 still work alone (e.g. on a back paddle). Paddle shortcuts (F23/F24) are independent and work alongside.
+
+## 0.7.7
+- RGB window: the status line only appears while switching modes or on errors (no more permanent "Live").
+
+## 0.7.6
+- RGB window warns when Windows Dynamic Lighting ("Use Dynamic Lighting on my devices") is on while a live effect is selected, with an **Open settings** button that jumps to Settings → Personalization → Dynamic Lighting.
+
+## 0.7.5
+- Low-battery warning pulses between 7% and 100% (not fully black) and ignores the Brightness slider, so it is always clearly visible.
+
+## 0.7.4
+- Low-battery warning pulse is 3× slower (one cycle every 3 s) and fades fully to black between pulses.
+
+## 0.7.3
+- Battery gauge preview: dragging to 15% or below with "Low battery warning" enabled shows the red warning pulse.
+  CPU temperature and CPU load previews don't affect it. Outside of preview, the warning still follows the real
+  battery in every live effect.
+
+## 0.7.2
+- Live effects reordered: informative effects (CPU temperature, CPU load, Battery gauge) on the left, decorative ones
+  (Color wheel, Spinning comet, Mode color) on the right.
+- **Preview slider** for the informative effects replaces the unused Speed slider.
+  - Hold and drag to simulate a value (temperature 30-100 °C, load or battery 0-100%) on the real rings and in the
+    on-screen preview.
+  - Let go to return to live data.
+  - At rest, the thumb follows the live value.
+
+## 0.7.1
+- Spinning comet fades in as well as out, so it reads as a smooth spinning glow.
+- CPU load and battery gauges: empty segments are fully off. They used to glow dimly in yellow/red, because the LEDs
+  are visible even at 5-10%.
+
+## 0.7.0
+- **New RGB window**, opened with the RGB button on the main window or from the tray. Lighting moved here from the
+  Controller window.
+  - **Built-in firmware effects:** off, solid, breathe, chroma and rainbow, with colour, brightness and speed.
+  - **Live per-LED effects:** CPU temperature, battery gauge, CPU load, spinning comet, colour wheel and mode colour.
+    They use the controller's HID LampArray mode (6 lamps) at about 30 fps, costing about 1% of one CPU core.
+  - **Live preview** of both rings.
+  - **Low-battery warning** overlay.
+  - **Mode flash:** in per-LED mode it plays on the lamps.
+  - **Hand-back:** returns the LEDs to the firmware on Off or Quit, and re-enters per-LED mode after sleep.
+- Documented the per-LED interface and the physical LED map (`docs/controller-protocol.md`, `docs/images/led-map.png`).
+
+## 0.6.0
+- **Battery charge target slider:** 80 / 85 / 90 / 95%.
+  - 80% uses the firmware limit.
+  - Higher targets are managed by the app: the limit turns on at the target, with 2% hysteresis.
+- Verified on device: charging stops at the target and the level holds, without discharging to 80%.
+- Investigated `0x03010002` on AC. It has no effect on charging, so targets below 80% aren't possible.
+- Sliders support a step size, so the charge slider snaps to 5%.
+
+## 0.5.6
+- Viewing Quiet / Balanced / Performance (with "Use in all modes" off) shows that mode's factory fan curve,
+  read-only and without points, titled "Factory fan curve for …". The custom-curve controls are hidden there.
+
+## 0.5.5
+- **Fix:** the firmware shares one fan table across all modes, so a custom fan curve used to stay active in
+  Quiet / Balanced / Performance. Presets now get the factory fan table again, including when switching with the
+  Legion button.
+- New **"Use in all modes"** option keeps your fan curve active everywhere, for those who want that.
+
+## 0.5.4
+- Fans + Power has **Custom / Quiet / Balanced / Perf.** tabs. The firmware presets are shown read-only, and
+  viewing a tab never changes the mode.
+- The mode buttons on the main window have tooltips with each mode's SPL / SPPT / FPPT.
+
+## 0.5.3
+- While back-paddle shortcuts are on, Y1/Y2 are locked in the Controller window ("Reserved for shortcuts").
+  Reset all buttons leaves them alone.
+- F23/F24 are no longer offered as mapping targets; they're reserved internally for the paddles.
+- The vibration-strength test rumble is cut short, to about 0.2 s.
+
+## 0.5.2
+- The mode flash uses saturated LED colours that are easy to tell apart on the stick rings: pure green, deep blue,
+  pure red and LED orange. The on-screen colours are unchanged.
+
+## 0.5.1
+- The stick-light mode flash now handles rapid switching. A new mode change interrupts the running animation and
+  shows the latest mode's colour. Your lighting is saved once per burst and restored at the end.
+
+## 0.5.0
+- **Back-paddle shortcuts:** hold Y1 or Y2 and press D-pad or A/B/X/Y, for 16 combinations. Each one can run:
+  - mode changes
+  - lights, mouse mode, screen refresh rate, show/hide app, charge limit
+  - keyboard presets or keys
+- New **Shortcuts** button on the main window and in the tray menu.
+- The mode-cycle hotkey is limited to F13-F22, because F23/F24 are reserved for the paddles.
+
+## 0.4.3
+- **Gyro mouse rebuilt in software.** It uses the Windows Sensor API, removes the IMU bias automatically, and
+  doesn't drift.
+- New gyro options: yaw/roll for left-right, Invert X/Y, and a Calibrate button.
+- Gyro and joystick mouse modes share the same click buttons: RT/LT, or RB/LB.
+- The custom power-limit ranges now update when switching between AC and battery.
+- Release builds no longer contain debug symbols or local paths.
+
+## 0.4.0
+- **New UI controls:** themed dropdowns and checkboxes.
+- Sub-windows are owned by the main window, so they stay on top and come back with it from the taskbar.
+- New **Extra** window:
+  - on-screen mode pop-up
+  - optional mode-colour flash of the stick lights
+  - F13-F24 mode-cycle hotkey
+- **Controller:**
+  - key combinations (Ctrl/Shift/Alt/Win + key)
+  - joystick mouse (stick choice and sensitivity; RT/LT or RB/LB to click)
+- **Start hidden in tray** option for Run on startup.
+- The Controller window now uses three columns.
+
+## 0.3.1
+- F13-F24 added as mapping targets.
+- Key tester in the Controller window.
+
+## 0.3.0
+- Controller button remapping: gamepad, keyboard, mouse and media targets, and reset to defaults.
+
+## 0.2.0
+- Automatic mode switching between AC and battery.
+- Working 80% battery charge limit.
+- Controller window:
+  - RGB lighting
+  - vibration
+  - polling rate
+  - touchpad and gyro toggles
+  - stick and trigger deadzones
+
+## 0.1.0
+- First release:
+  - performance modes
+  - custom SPL/SPPT/FPPT
+  - fan curve and full-speed fans
+  - refresh rate
+  - Windows power mode
+  - tray icon
+  - run on startup
