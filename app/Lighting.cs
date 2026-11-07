@@ -52,29 +52,61 @@ public static class Lighting
     static long _flashStartMs = -1;
     static Color _flashColor;
 
+    /// <summary>True while the charging display overrides the chosen effect (charger plugged in, option on).</summary>
+    public static bool ChargingDisplayActive => _charge;
+    static volatile bool _charge;
+    static bool OnAC => SystemInformation.PowerStatus.PowerLineStatus == PowerLineStatus.Online;
+    static bool ChargeWanted => Cfg.RgbChargingDisplay && OnAC;
+
     public static void Init(ModeControl mc)
     {
         _mc = mc;
         SystemEvents.PowerModeChanged += (_, e) =>
         {
             // The controller resets its lighting mode across sleep; re-enter per-LED mode if a live effect is on.
-            if (e.Mode == PowerModes.Resume && Find(Cfg.RgbEffect).Live)
-                Task.Delay(4000).ContinueWith(_ => { lock (_applyLock) { StopThread(); StartThread(); } });
+            // (The charger may also have been plugged in or out while asleep.)
+            if (e.Mode == PowerModes.Resume && (_run || ChargeWanted || (Cfg.RgbEffect is not null && Find(Cfg.RgbEffect).Live)))
+                Task.Delay(4000).ContinueWith(_ => ApplyCore(restart: true));
+            // Charger plugged in / unplugged: switch between the charging display and the chosen effect.
+            else if (e.Mode == PowerModes.StatusChange && ChargeWanted != _charge)
+                Task.Run(Apply);
         };
     }
 
-    /// <summary>Applies Cfg.RgbEffect (call from a background thread; may take a few seconds when switching modes).</summary>
-    public static void Apply()
+    /// <summary>Applies Cfg.RgbEffect, or the charging display while plugged in (call from a background thread;
+    /// may take a few seconds when switching modes).</summary>
+    public static void Apply() => ApplyCore(restart: false);
+
+    static void ApplyCore(bool restart)
     {
-        if (Cfg.RgbEffect is null) return; // never chosen in this app → leave the controller alone
         lock (_applyLock)
         {
-            var eff = Find(Cfg.RgbEffect);
-            if (eff.Live) { StartThread(); return; }
+            bool wasCharge = _charge;
+            _charge = ChargeWanted;
+            // RgbEffect null = never chosen in this app → leave the controller alone (unless we drove it ourselves)
+            if (Cfg.RgbEffect is null && !_charge && !_run) return;
             bool wasLive = _run;
+            if (restart) StopThread();
+            if (_charge || (Cfg.RgbEffect is not null && Find(Cfg.RgbEffect).Live))
+            {
+                // charging display starts even when the lights are off: force the master switch on
+                if (_charge && !wasCharge && _run) Pad.Run(p => (bool?)p.SetFeature(Feature.RgbEnable, 1));
+                if (_charge != wasCharge) Log.Write("RGB: charging display " + (_charge ? "on" : "off"));
+                StartThread();
+                return;
+            }
             StopThread();
-            if (wasLive) ExitPerLedMode();
-            ApplyFirmware(eff);
+            if (wasLive)
+            {
+                // Lights off first: leaving per-LED mode shows the stored firmware profile for a moment before
+                // ApplyFirmware below sets the chosen effect.
+                Pad.Run(p => (bool?)p.SetFeature(Feature.RgbEnable, 0));
+                ExitPerLedMode();
+            }
+            else LeaveStrandedPerLedMode();
+            if (Cfg.RgbEffect is not null) ApplyFirmware(Find(Cfg.RgbEffect));
+            else Status = "";
+            if (wasCharge) Log.Write("RGB: charging display off");
         }
     }
 
@@ -98,10 +130,13 @@ public static class Lighting
     {
         Pad.Run(p =>
         {
-            if (eff.Id == "off") return (bool?)p.SetFeature(Feature.RgbEnable, 0);
             var effect = eff.Id switch { "breathe" => RgbEffect.Breathe, "chroma" => RgbEffect.Chroma, "rainbow" => RgbEffect.Rainbow, _ => RgbEffect.Solid };
             var prof = new RgbProfile(effect, Color.FromArgb(Cfg.RgbColor), (byte)Math.Clamp(Cfg.RgbBrightness, 0, 100), (byte)Math.Clamp(Cfg.RgbSpeed, 0, 100));
-            return p.SetRgbProfile(1, prof) & p.UseRgbProfile(1) & p.SetFeature(Feature.RgbEnable, 1);
+            // "Off" still rewrites the stored profile, so a stale colour (e.g. from an interrupted flash) can't reappear.
+            if (eff.Id == "off") return p.SetRgbProfile(1, prof) & p.SetFeature(Feature.RgbEnable, 0);
+            // Only select the profile: writing the RGB mode (even the same value) makes the controller re-enumerate.
+            // Callers make sure it is already in normal (firmware) mode.
+            return p.SetRgbProfile(1, prof) & p.SelectRgbProfile(1) & p.SetFeature(Feature.RgbEnable, 1);
         });
         var c = eff.Id == "off" ? Color.Black : Scale(Color.FromArgb(Cfg.RgbColor), Cfg.RgbBrightness / 100.0);
         for (int i = 0; i < Current.Length; i++) Current[i] = c;
@@ -132,9 +167,45 @@ public static class Lighting
     static void ExitPerLedMode()
     {
         using (var lamps = LampArray.Open()) lamps?.SetAutonomous(true);
-        Pad.Run(p => (bool?)p.SetRgbMode(1));
-        Thread.Sleep(2500); // controller re-enumerates
-        Log.Write("RGB: back to firmware mode");
+        Log.Write(SwitchToFirmwareMode() ? "RGB: back to firmware mode" : "RGB: could not leave per-LED mode (controller not responding)");
+    }
+
+    /// <summary>
+    /// Sets RGB mode 1 and checks that it took. Right after resume the controller may not answer yet, and a failed
+    /// switch leaves it in per-LED mode with nothing driving the lamps (frozen on the last frame), so retry ~15 s.
+    /// </summary>
+    static bool SwitchToFirmwareMode()
+    {
+        for (int i = 0; i < 6; i++)
+        {
+            byte? mode = Pad.Run(p => p.GetRgbMode());
+            if (mode == 1) return true;
+            if (mode is not null) Pad.Run(p => (bool?)p.SetRgbMode(1));
+            Thread.Sleep(2500); // controller re-enumerates (or is still waking up)
+        }
+        return false;
+    }
+
+    /// <summary>
+    /// Repairs the "stuck" state: the controller is in per-LED mode but no live effect is running (e.g. leaving it
+    /// failed after sleep). Switches back to normal mode once and re-applies the chosen built-in effect.
+    /// </summary>
+    public static void RecoverStrandedPerLedMode()
+    {
+        lock (_applyLock)
+        {
+            if (_mc is null || _run || !LeaveStrandedPerLedMode()) return;
+            if (Cfg.RgbEffect is not null && !Find(Cfg.RgbEffect).Live) ApplyFirmware(Find(Cfg.RgbEffect));
+        }
+    }
+
+    /// <summary>True if the controller was stranded in per-LED mode and has been switched back.</summary>
+    static bool LeaveStrandedPerLedMode()
+    {
+        if (Pad.Run(p => p.GetRgbMode()) != 0) return false;
+        Log.Write("RGB: controller was left in per-LED mode with no live effect, switching back");
+        ExitPerLedMode();
+        return true;
     }
 
     static void StartThread()
@@ -159,6 +230,7 @@ public static class Lighting
     {
         LampArray? lamps = null;
         var colors = new Color[LampArray.Count];
+        var scratch = new Color[LampArray.Count];
         var last = new int[LampArray.Count];
         long start = Environment.TickCount64, nextTemp = 0, nextLoad = 0;
         double temp = 50, load = 0;
@@ -177,6 +249,9 @@ public static class Lighting
                 var ps = SystemInformation.PowerStatus;
                 double battery = Math.Clamp(ps.BatteryLifePercent, 0f, 1f);
                 bool charging = ps.PowerLineStatus == PowerLineStatus.Online;
+                // plugged in but not taking charge = full, or held by the charge limit
+                bool takingCharge = charging && ps.BatteryChargeStatus.HasFlag(BatteryChargeStatus.Charging);
+                Status = _charge ? "Showing charge level. Your effect returns when you unplug." : "Live";
 
                 LiveFraction = Cfg.RgbEffect switch { "temp" => Math.Clamp((temp - 30) / 70, 0, 1), "load" => load, "battery" => battery, _ => 0 };
                 if (PreviewValue is double pv)
@@ -184,7 +259,9 @@ public static class Lighting
                     // simulate: temperature 30-100 °C, load and battery 0-100 % (not charging)
                     Render(Cfg.RgbEffect, t, 30 + pv * 70, pv, pv, false, colors);
                 }
+                else if (_charge) RenderCharging(t, battery, takingCharge, colors);
                 else Render(Cfg.RgbEffect, t, temp, load, battery, charging, colors);
+                ToPhysical(colors, scratch);
 
                 double bright = Math.Clamp(Cfg.RgbBrightness, 0, 100) / 100.0;
                 for (int i = 0; i < colors.Length; i++) colors[i] = Scale(colors[i], bright);
@@ -222,7 +299,21 @@ public static class Lighting
         finally { lamps?.Dispose(); }
     }
 
-    /// <summary>Computes the 6 lamp colours for a live effect (lamp 0..5 = clockwise from 9 o'clock on the left ring).</summary>
+    /// <summary>
+    /// Effects draw in "logical" order: position 0..5 runs clockwise on the left ring from 7 o'clock, the first LED
+    /// after the gap at 6 o'clock, so gauges fill whole sectors (7-9, 11-1, 3-5). Physical lamp 0 sits at 9 o'clock,
+    /// so logical position i drives lamp (i + 5) % 6. See docs/controller-protocol.md.
+    /// </summary>
+    const int StartLamp = 5;
+
+    static void ToPhysical(Color[] c, Color[] tmp)
+    {
+        int n = c.Length;
+        Array.Copy(c, tmp, n);
+        for (int i = 0; i < n; i++) c[(i + StartLamp) % n] = tmp[i];
+    }
+
+    /// <summary>Computes the 6 colours for a live effect in logical order (see <see cref="StartLamp"/>).</summary>
     static void Render(string? id, double t, double temp, double load, double battery, bool charging, Color[] c)
     {
         int n = c.Length;
@@ -293,6 +384,29 @@ public static class Lighting
                 for (int i = 0; i < n; i++) c[i] = user;
                 break;
         }
+    }
+
+    /// <summary>
+    /// Charging display: the battery gauge with the segment currently being filled pulsing between 7 % and 100 %
+    /// (one cycle every 2 s). Full, or held at the charge limit: the gauge turns solid green and stops pulsing.
+    /// </summary>
+    static void RenderCharging(double t, double battery, bool takingCharge, Color[] c)
+    {
+        int n = c.Length;
+        var green = Color.FromArgb(0, 255, 40);
+        if (!takingCharge || battery >= 0.995)
+        {
+            // done: every lit segment solid green (all six at 100 %)
+            double segsDone = battery >= 0.995 ? n : battery * n;
+            for (int i = 0; i < n; i++) { double f = Math.Clamp(segsDone - i, 0, 1); c[i] = Scale(green, f * f); }
+            return;
+        }
+        var col = battery > 0.5 ? green : battery > 0.2 ? Color.FromArgb(255, 200, 0) : Color.FromArgb(255, 0, 0);
+        int active = Math.Min((int)(battery * n), n - 1);               // segment being filled right now
+        double s = Math.Sin(Math.PI * t / 2);
+        double pulse = 0.07 + 0.93 * s * s;
+        for (int i = 0; i < n; i++)
+            c[i] = i < active ? col : i == active ? Scale(col, pulse) : Color.Black;
     }
 
     // ---- colour helpers ------------------------------------------------------------------------------

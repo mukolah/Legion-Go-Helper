@@ -4,3 +4,6 @@ obj/
 dist/
 *.user
 .vs/
+
+# Personal reference sketch (traced over manual artwork) - not for publishing
+mappinglamps.png

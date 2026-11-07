@@ -44,7 +44,7 @@ static class Program
         mc.RefreshMode();
         if (mc.Cfg.MouseMode != "off") Task.Run(() => MouseModes.Apply(mc.Cfg));
         Lighting.Init(mc);
-        if (mc.Cfg.RgbEffect is not null) Task.Run(Lighting.Apply);
+        if (mc.Cfg.RgbEffect is not null || mc.Cfg.RgbChargingDisplay) Task.Run(Lighting.Apply);
         if (args.Contains("-fans")) form.OpenFans();
         else if (args.Contains("-controller")) { form.ShowNearTray(); form.OpenControllerWindow(); }
         else if (args.Contains("-rgb")) { form.ShowNearTray(); form.OpenRgbWindow(); }

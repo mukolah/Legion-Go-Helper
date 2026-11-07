@@ -94,10 +94,13 @@ public sealed class ModeOsd : Form
 /// Fades the joystick RGB rings in and out in a colour, then restores the user's lighting exactly.
 /// A newer flash interrupts a running one (rapid mode switching always ends on the latest colour); the user's
 /// lighting is saved once at the start of a burst and restored only by the last flash.
+/// Each lighting mode flashes in its own way and the flash never switches between them: a live effect (per-LED /
+/// Dynamic Lighting mode) flashes in the render loop, otherwise only the static firmware profile is rewritten.
+/// The RGB mode is never written here, because every mode write makes the controller re-enumerate.
 /// </summary>
 public static class RgbFlash
 {
-    record Saved(byte Enabled, byte Mode, byte Active, RgbProfile Profile);
+    record Saved(byte Enabled, byte Active, RgbProfile Profile);
 
     static readonly object _gate = new();
     static int _generation;
@@ -116,12 +119,16 @@ public static class RgbFlash
                 {
                     if (_saved is null)
                     {
+                        // Per-LED mode with no live effect is the stuck state, not a real choice: repair it once
+                        // so the static flash below is visible (and is not saved and restored as the user's mode).
+                        Lighting.RecoverStrandedPerLedMode();
+                        if (Lighting.LiveActive) { Lighting.Flash(color); return; }
                         _saved = Pad.Run(p =>
                         {
                             var enabled = p.GetFeature(Feature.RgbEnable);
                             var profile = p.GetRgbProfile(1);
                             if (enabled is null || profile is null) return null;
-                            return new Saved(enabled.Value, p.GetRgbMode() ?? 1, p.GetActiveRgbProfile() ?? 1, profile);
+                            return new Saved(enabled.Value, p.GetActiveRgbProfile() ?? 1, profile);
                         });
                         if (_saved is null) return;
                     }
@@ -132,23 +139,28 @@ public static class RgbFlash
                 {
                     if (!Current()) return (bool?)false;          // superseded while waiting for the controller
                     p.SetRgbProfile(1, new RgbProfile(RgbEffect.Solid, color, brightness, 0));
-                    if (first) { p.UseRgbProfile(1); p.SetFeature(Feature.RgbEnable, 1); }
+                    if (first) { p.SelectRgbProfile(1); p.SetFeature(Feature.RgbEnable, 1); }
                     return true;
                 }) == true;
 
-                if (!Step(15, first: true)) return;
-                foreach (var b in new byte[] { 35, 60, 85, 100 }) { Thread.Sleep(35); if (!Step(b)) return; }
-                for (int i = 0; i < 9; i++) { Thread.Sleep(50); if (!Current()) return; }   // hold ~450 ms, abortable
-                foreach (var b in new byte[] { 85, 60, 35, 15, 0 }) { Thread.Sleep(45); if (!Step(b)) return; }
+                void Animate()
+                {
+                    if (!Step(15, first: true)) return;
+                    foreach (var b in new byte[] { 35, 60, 85, 100 }) { Thread.Sleep(35); if (!Step(b)) return; }
+                    for (int i = 0; i < 9; i++) { Thread.Sleep(50); if (!Current()) return; }   // hold ~450 ms, abortable
+                    foreach (var b in new byte[] { 85, 60, 35, 15, 0 }) { Thread.Sleep(45); if (!Step(b)) return; }
+                }
+                Animate();
 
-                // Last flash of the burst: restore the user's lighting.
+                // Last flash of the burst: restore the user's lighting. Also when a step failed (controller
+                // dropped out), so the flash colour is never left behind in the stored profile; a superseded
+                // flash leaves this to the newer one.
                 lock (_gate)
                 {
                     if (!Current() || _saved is not { } s) return;
                     Pad.Run(p =>
                     {
                         p.SetRgbProfile(1, s.Profile);
-                        p.SetRgbMode(s.Mode);
                         p.SelectRgbProfile(s.Active);
                         return (bool?)p.SetFeature(Feature.RgbEnable, s.Enabled);
                     });

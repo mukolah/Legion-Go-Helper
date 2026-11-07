@@ -44,6 +44,8 @@ public class Config
     public int RgbBrightness { get; set; } = 100;     // 0-100
     public int RgbSpeed { get; set; } = 50;           // 1-100
     public bool RgbLowBatteryWarning { get; set; } = true;
+    /// <summary>While the charger is plugged in, the sticks show the charge level (overrides the chosen effect, even Off).</summary>
+    public bool RgbChargingDisplay { get; set; }
 
     // Mode-change feedback
     public bool ShowOsd { get; set; } = true;

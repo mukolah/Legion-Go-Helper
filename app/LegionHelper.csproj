@@ -7,12 +7,14 @@
     <UseWindowsForms>true</UseWindowsForms>
     <ImplicitUsings>enable</ImplicitUsings>
     <ApplicationManifest>app.manifest</ApplicationManifest>
+    <!-- Explorer/taskbar icon. Regenerate with Assets\make-icon.ps1 -->
+    <ApplicationIcon>Assets\app.ico</ApplicationIcon>
     <RootNamespace>LegionHelper</RootNamespace>
     <AssemblyName>LegionHelper</AssemblyName>
     <Platforms>x64</Platforms>
     <PlatformTarget>x64</PlatformTarget>
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
-    <Version>0.8.2</Version>
+    <Version>0.8.4</Version>
     <!-- No PDB in release builds and no local paths in the binary (safe to publish) -->
     <DebugType>none</DebugType>
     <DebugSymbols>false</DebugSymbols>

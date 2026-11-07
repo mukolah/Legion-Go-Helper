@@ -70,6 +70,9 @@ In this "custom" mode both rings show **one** colour or effect.
 Writing **`10 01 00`** (RGB mode 0, "dynamic") makes the controller re-enumerate. Interface **`mi_04`** turns into a
 standard **HID LampArray** (usage page `0x59`), which is the device class behind Windows 11 Dynamic Lighting. Windows
 then offers its Dynamic Lighting settings. `10 01 01` switches back to the normal vendor mode.
+Every write to `10 01` re-enumerates the controller, even when it sets the mode it is already in, so only write
+it when the mode really has to change (and read it back with `0F 01` to confirm: right after resume the write can
+be lost).
 
 **Requirement:** the RGB master switch (`04 06 01`) must be on, or every LampArray update is accepted but the LEDs
 stay dark.
@@ -114,6 +117,9 @@ channels: **lamp N drives one LED on each ring**, and the right ring is the left
 | 5 | 7 | 1 |
 
 Lamps 0→5 run clockwise on both rings: from 9 o'clock on the left, from 3 o'clock on the right.
+
+Legion Helper's live effects start at **lamp 5** (7 o'clock on the left ring, the first LED after the 6 o'clock gap)
+and run clockwise 5, 0, 1, 2, 3, 4, so gauges fill whole sectors of the left ring (see `Lighting.ToPhysical`).
 
 **What follows from this:**
 - **Possible:** per-segment colours, spinning or chasing effects (both rings turn the same way), 6-step gauges, and

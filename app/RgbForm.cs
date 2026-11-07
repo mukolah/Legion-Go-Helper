@@ -43,10 +43,10 @@ public class RgbForm : Form
 
     void UpdateDynamicLightingWarning()
     {
-        bool show = Lighting.Find(_cfg.RgbEffect).Live && _cfg.RgbEffect is not null && WindowsDynamicLightingOn();
+        bool show = ((Lighting.Find(_cfg.RgbEffect).Live && _cfg.RgbEffect is not null) || Lighting.ChargingDisplayActive) && WindowsDynamicLightingOn();
         _dlWarn.Visible = _dlButton.Visible = show;
     }
-    readonly RCheckBox _lowBat = new();
+    readonly RCheckBox _lowBat = new(), _chargeShow = new();
     readonly System.Windows.Forms.Timer _timer = new() { Interval = 66 };
     bool _loading;
     float _k;
@@ -124,7 +124,14 @@ public class RgbForm : Form
         _lowBat.Checked = _cfg.RgbLowBatteryWarning;
         _lowBat.Click += (_, _) => { _cfg.RgbLowBatteryWarning = _lowBat.Checked; _cfg.Save(); };
         Controls.Add(_lowBat);
-        y += S(48);
+        y += S(44);
+        _chargeShow.Text = "Show charge level while plugged in";
+        _chargeShow.AccentColor = Theme.Quiet;
+        _chargeShow.SetBounds(x2, y, rightW, S(30));
+        _chargeShow.Checked = _cfg.RgbChargingDisplay;
+        _chargeShow.Click += (_, _) => { _cfg.RgbChargingDisplay = _chargeShow.Checked; _cfg.Save(); Task.Run(Lighting.Apply); };
+        Controls.Add(_chargeShow);
+        y += S(44);
 
         Label SliderRow(Slider s, Label val, string name, int min, int max)
         {
@@ -158,8 +165,8 @@ public class RgbForm : Form
 
         _hint.ForeColor = Theme.ForeDim; _hint.SetBounds(x2, y, rightW, S(44)); Controls.Add(_hint);
         y += S(46);
-        _status.ForeColor = Theme.ForeDim; _status.SetBounds(x2, y, rightW, S(26)); Controls.Add(_status);
-        y += S(30);
+        _status.ForeColor = Theme.ForeDim; _status.SetBounds(x2, y, rightW, S(44)); Controls.Add(_status);
+        y += S(48);
 
         // Warning when Windows Dynamic Lighting could fight the live effects
         _dlWarn.Text = "Windows Dynamic Lighting is on and may override these lights.";
